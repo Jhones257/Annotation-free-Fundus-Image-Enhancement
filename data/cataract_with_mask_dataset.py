@@ -31,12 +31,18 @@ class CataractWithMaskDataset(BaseDataset):
 
         self.isTrain = opt.isTrain
 
+    @staticmethod
+    def _image_mode(channels):
+        return 'L' if channels == 1 else 'RGB'
+
     def __getitem__(self, index):
         # read a image given a random integer index
         if self.isTrain:
             source_path = self.source_paths[index]
-            source_path_mask_path = os.path.join(self.dir_source_mask, os.path.split(source_path)[-1].replace('jpg', 'png'))
-            SAB = Image.open(source_path).convert('RGB')
+            source_name = os.path.splitext(os.path.split(source_path)[-1])[0]
+            source_path_mask_path = os.path.join(self.dir_source_mask, source_name + '.png')
+            source_mode = self._image_mode(1 if self.input_nc == 1 and self.output_nc == 1 else 3)
+            SAB = Image.open(source_path).convert(source_mode)
             SA_mask = Image.open(source_path_mask_path).convert('L')
             w, h = SAB.size
             w2 = int(w / 2)
@@ -56,7 +62,8 @@ class CataractWithMaskDataset(BaseDataset):
             target_index = random.randint(0, self.target_size - 1) if self.isTrain else index % self.target_size
             target_path = self.target_paths[target_index]
             target_mask_path = self.target_mask_paths[target_index]
-            TA = Image.open(target_path).convert('RGB')
+            target_mode = self._image_mode(self.input_nc)
+            TA = Image.open(target_path).convert(target_mode)
             TA_mask = Image.open(target_mask_path).convert('L')
             target_transform_params = get_params(self.opt, TA.size)
             target_A_transform, target_A_mask_transform = get_transform_six_channel(self.opt, target_transform_params, grayscale=(self.input_nc == 1))
