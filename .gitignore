@@ -2,7 +2,6 @@
 debug*
 log/
 datasets/
-checkpoints/
 results/
 build/
 protected/
@@ -43,4 +42,5 @@ test/.coverage
 test/data/legacy_serialized.pt
 *~
 .idea
-/checkpoints/
+/ORIGINAL_CLEAN_768x768/
+/RETINOGRAFO_EYER_PROCESSED/
