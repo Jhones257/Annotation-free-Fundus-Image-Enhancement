@@ -3,6 +3,7 @@ import csv
 import shutil
 import sys
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from PIL import Image
@@ -24,6 +25,16 @@ def parse_args():
     parser.add_argument('--output_dir', required=True,
                         help='Destination directory that will contain target/ and target_mask/ trees.')
     parser.add_argument('--overwrite', action='store_true', help='Overwrite existing copied images and masks.')
+    parser.add_argument(
+        '--target_channels',
+        type=int,
+        choices=[1, 3],
+        default=None,
+        help=(
+            'Optional: force the saved images under target/ to have 1 channel (grayscale) or 3 channels (RGB). '
+            'If omitted, images are copied as-is without re-encoding.'
+        ),
+    )
     parser.add_argument('--extensions', nargs='+', default=sorted(VALID_EXTENSIONS),
                         help='List of valid image extensions (case-insensitive).')
     parser.add_argument('--csv', default='',
@@ -51,14 +62,33 @@ def save_mask(mask_array: np.ndarray, destination: Path):
     Image.fromarray((mask_array.astype(np.uint8)) * 255).save(destination)
 
 
-def copy_image(src: Path, dst: Path, overwrite: bool):
+def copy_or_convert_image(src: Path, dst: Path, overwrite: bool, target_channels: Optional[int]):
     if dst.exists() and not overwrite:
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+
+    if target_channels is None:
+        shutil.copy2(src, dst)
+        return
+
+    with Image.open(src) as img:
+        if target_channels == 1:
+            img = img.convert('L')
+        elif target_channels == 3:
+            img = img.convert('RGB')
+        else:
+            raise ValueError(f'Unsupported target_channels: {target_channels}')
+        img.save(dst)
 
 
-def _copy_with_mask(image_path: Path, input_dir: Path, target_dir: Path, target_mask_dir: Path, overwrite: bool):
+def _copy_with_mask(
+    image_path: Path,
+    input_dir: Path,
+    target_dir: Path,
+    target_mask_dir: Path,
+    overwrite: bool,
+    target_channels: Optional[int],
+):
     relative_path = image_path.relative_to(input_dir)
     destination_image = target_dir / relative_path
     destination_mask = target_mask_dir / relative_path.with_suffix('.png')
@@ -66,7 +96,7 @@ def _copy_with_mask(image_path: Path, input_dir: Path, target_dir: Path, target_
     if destination_image.exists() and destination_mask.exists() and not overwrite:
         return False
 
-    copy_image(image_path, destination_image, overwrite)
+    copy_or_convert_image(image_path, destination_image, overwrite, target_channels)
     pil_image = Image.open(image_path).convert('RGB')
     mask_array = get_mask(pil_image)
     save_mask(mask_array, destination_mask)
@@ -98,6 +128,7 @@ def iter_images_from_csv(input_dir: Path, csv_path: Path, image_column: str, qua
 
 
 def build_dataset(input_dir: Path, output_dir: Path, overwrite: bool, allowed_exts,
+                  target_channels: Optional[int],
                   csv_path: Path = None, image_column: str = 'image', quality_column: str = 'quality', qualities=None):
     ensure_dataset_scaffold(output_dir)
     target_dir = output_dir / 'target'
@@ -124,7 +155,14 @@ def build_dataset(input_dir: Path, output_dir: Path, overwrite: bool, allowed_ex
             invalid_ext += 1
             continue
 
-        copied_now = _copy_with_mask(image_path, input_dir, target_dir, target_mask_dir, overwrite)
+        copied_now = _copy_with_mask(
+            image_path,
+            input_dir,
+            target_dir,
+            target_mask_dir,
+            overwrite,
+            target_channels,
+        )
         if copied_now:
             copied += 1
         else:
@@ -154,6 +192,7 @@ def main():
         output_dir,
         args.overwrite,
         allowed_exts,
+        args.target_channels,
         csv_path=csv_path,
         image_column=args.csv_image_column,
         quality_column=args.csv_quality_column,

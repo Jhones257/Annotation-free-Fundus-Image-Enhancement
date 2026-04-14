@@ -50,6 +50,10 @@ class GFENetModel(BaseModel):
         parser.add_argument('--filters_width_list', nargs='+', type=int, default=[9, 19, 29])
         parser.add_argument('--nsig_list', nargs='+', type=float, default=[5.0, 9.0, 13.0])
         parser.add_argument('--sub_low_ratio', type=float, default=1.0, help='weight for L1L loss')
+        parser.add_argument('--gfe_use_residual', type=int, default=0, choices=[0, 1],
+                    help='use residual blocks in GFENet encoder/decoder')
+        parser.add_argument('--gfe_use_attention', type=int, default=0, choices=[0, 1],
+                    help='use attention gates on U-Net skip connections')
         # parser.add_argument('--is_clamp', action='store_true')
 
         return parser
@@ -79,7 +83,9 @@ class GFENetModel(BaseModel):
         self.hfc_input_visual_start = opt.input_nc * max(0, len(opt.filters_width_list) - 1)
         self.hfc_output_visual_start = opt.output_nc * max(0, len(opt.filters_width_list) - 1)
         self.netG = networks.define_G(network_input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
-                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
+                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids,
+                                      gfe_use_residual=bool(opt.gfe_use_residual),
+                                      gfe_use_attention=bool(opt.gfe_use_attention))
         self.hfc_filter_list = [
             HFCFilter(w, s, sub_low_ratio=opt.sub_low_ratio, sub_mask=True, is_clamp=True).to(self.device)
             for w, s in zip(opt.filters_width_list, opt.nsig_list)

@@ -10,10 +10,77 @@ import torch.nn as nn
 import functools
 
 
+def _use_bias_from_norm(norm_layer):
+    if type(norm_layer) == functools.partial:
+        return norm_layer.func == nn.InstanceNorm2d
+    return norm_layer == nn.InstanceNorm2d
+
+
+class ResidualConvBlock(nn.Module):
+    def __init__(self, channels, norm_layer=nn.BatchNorm2d):
+        super(ResidualConvBlock, self).__init__()
+        use_bias = _use_bias_from_norm(norm_layer)
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=use_bias)
+        self.norm1 = norm_layer(channels)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=use_bias)
+        self.norm2 = norm_layer(channels)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        identity = x
+        out = self.relu(self.norm1(self.conv1(x)))
+        out = self.norm2(self.conv2(out))
+        out = self.relu(out + identity)
+        return out
+
+
+class ResidualDownBlock(nn.Module):
+    def __init__(self, input_nc, output_nc, norm_layer=nn.BatchNorm2d):
+        super(ResidualDownBlock, self).__init__()
+        use_bias = _use_bias_from_norm(norm_layer)
+        self.conv1 = nn.Conv2d(input_nc, output_nc, kernel_size=3, stride=2, padding=1, bias=use_bias)
+        self.norm1 = norm_layer(output_nc)
+        self.conv2 = nn.Conv2d(output_nc, output_nc, kernel_size=3, stride=1, padding=1, bias=use_bias)
+        self.norm2 = norm_layer(output_nc)
+        self.skip = nn.Conv2d(input_nc, output_nc, kernel_size=1, stride=2, padding=0, bias=use_bias)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        residual = self.skip(x)
+        out = self.relu(self.norm1(self.conv1(x)))
+        out = self.norm2(self.conv2(out))
+        out = self.relu(out + residual)
+        return out
+
+
+class AttentionGate(nn.Module):
+    def __init__(self, g_channels, x_channels, inter_channels, norm_layer=nn.BatchNorm2d):
+        super(AttentionGate, self).__init__()
+        use_bias = _use_bias_from_norm(norm_layer)
+        self.W_g = nn.Sequential(
+            nn.Conv2d(g_channels, inter_channels, kernel_size=1, stride=1, padding=0, bias=use_bias),
+            norm_layer(inter_channels)
+        )
+        self.W_x = nn.Sequential(
+            nn.Conv2d(x_channels, inter_channels, kernel_size=1, stride=1, padding=0, bias=use_bias),
+            norm_layer(inter_channels)
+        )
+        self.psi = nn.Sequential(
+            nn.ReLU(inplace=True),
+            nn.Conv2d(inter_channels, 1, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.Sigmoid()
+        )
+
+    def forward(self, g, x):
+        attention = self.psi(self.W_g(g) + self.W_x(x))
+        return x * attention
+
+
 class UnetGFENetGenerator(nn.Module):
     """Create a Unet-based generator"""
 
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d,
+                 use_dropout=False, use_residual_blocks=False, use_attention=False):
         """Construct a Unet generator
         Parameters:
             input_nc (int)  -- the number of channels in input images
@@ -28,17 +95,26 @@ class UnetGFENetGenerator(nn.Module):
         """
         super(UnetGFENetGenerator, self).__init__()
         assert num_downs == 8
-        unet_block8 = GFENetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, norm_layer=norm_layer, innermost=True)  # add the innermost layer
+        unet_block8 = GFENetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, norm_layer=norm_layer,
+                            innermost=True, use_residual_blocks=use_residual_blocks)  # add the innermost layer
         unet_block7 = GFENetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None,
-                                             norm_layer=norm_layer, use_dropout=use_dropout)
+                             norm_layer=norm_layer, use_dropout=use_dropout,
+                             use_residual_blocks=use_residual_blocks)
         unet_block6 = GFENetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None,
-                                             norm_layer=norm_layer, use_dropout=use_dropout)
+                             norm_layer=norm_layer, use_dropout=use_dropout,
+                             use_residual_blocks=use_residual_blocks)
         unet_block5 = GFENetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None,
-                                             norm_layer=norm_layer, use_dropout=use_dropout)
-        unet_block4 = GFENetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, norm_layer=norm_layer)
-        unet_block3 = GFENetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, norm_layer=norm_layer)
-        unet_block2 = GFENetSkipConnectionBlock(ngf, ngf * 2, input_nc=None, norm_layer=norm_layer)
-        unet_block1 = GFENetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, outermost=True, norm_layer=norm_layer)  # add the outermost layer
+                             norm_layer=norm_layer, use_dropout=use_dropout,
+                             use_residual_blocks=use_residual_blocks)
+        unet_block4 = GFENetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, norm_layer=norm_layer,
+                            use_residual_blocks=use_residual_blocks)
+        unet_block3 = GFENetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, norm_layer=norm_layer,
+                            use_residual_blocks=use_residual_blocks)
+        unet_block2 = GFENetSkipConnectionBlock(ngf, ngf * 2, input_nc=None, norm_layer=norm_layer,
+                            use_residual_blocks=use_residual_blocks)
+        unet_block1 = GFENetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, outermost=True,
+                            norm_layer=norm_layer,
+                            use_residual_blocks=use_residual_blocks)  # add the outermost layer
 
         self.down1, self.up1, self.h_up1 = unet_block1.down, unet_block1.up, unet_block1.h_up
         self.down2, self.up2, self.h_up2 = unet_block2.down, unet_block2.up, unet_block2.h_up
@@ -48,6 +124,16 @@ class UnetGFENetGenerator(nn.Module):
         self.down6, self.up6, self.h_up6 = unet_block6.down, unet_block6.up, unet_block6.h_up
         self.down7, self.up7, self.h_up7 = unet_block7.down, unet_block7.up, unet_block7.h_up
         self.down8, self.up8, self.h_up8 = unet_block8.down, unet_block8.up, unet_block8.h_up
+
+        self.use_attention = use_attention
+        if self.use_attention:
+            self.attn7 = AttentionGate(ngf * 8, ngf * 8, ngf * 4, norm_layer=norm_layer)
+            self.attn6 = AttentionGate(ngf * 8, ngf * 8, ngf * 4, norm_layer=norm_layer)
+            self.attn5 = AttentionGate(ngf * 8, ngf * 8, ngf * 4, norm_layer=norm_layer)
+            self.attn4 = AttentionGate(ngf * 8, ngf * 8, ngf * 4, norm_layer=norm_layer)
+            self.attn3 = AttentionGate(ngf * 4, ngf * 4, ngf * 2, norm_layer=norm_layer)
+            self.attn2 = AttentionGate(ngf * 2, ngf * 2, ngf, norm_layer=norm_layer)
+            self.attn1 = AttentionGate(ngf, ngf, max(1, ngf // 2), norm_layer=norm_layer)
 
 
     def forward(self, x):
@@ -64,13 +150,20 @@ class UnetGFENetGenerator(nn.Module):
 
         # upsample
         h_u8 = self.up8(d8)
-        h_u7 = self.up7(torch.cat([h_u8, d7], 1))
-        h_u6 = self.up6(torch.cat([h_u7, d6], 1))
-        h_u5 = self.up5(torch.cat([h_u6, d5], 1))
-        h_u4 = self.up4(torch.cat([h_u5, d4], 1))
-        h_u3 = self.up3(torch.cat([h_u4, d3], 1))
-        h_u2 = self.up2(torch.cat([h_u3, d2], 1))
-        h_u1 = self.up1(torch.cat([h_u2, d1], 1))
+        skip7 = self.attn7(h_u8, d7) if self.use_attention else d7
+        h_u7 = self.up7(torch.cat([h_u8, skip7], 1))
+        skip6 = self.attn6(h_u7, d6) if self.use_attention else d6
+        h_u6 = self.up6(torch.cat([h_u7, skip6], 1))
+        skip5 = self.attn5(h_u6, d5) if self.use_attention else d5
+        h_u5 = self.up5(torch.cat([h_u6, skip5], 1))
+        skip4 = self.attn4(h_u5, d4) if self.use_attention else d4
+        h_u4 = self.up4(torch.cat([h_u5, skip4], 1))
+        skip3 = self.attn3(h_u4, d3) if self.use_attention else d3
+        h_u3 = self.up3(torch.cat([h_u4, skip3], 1))
+        skip2 = self.attn2(h_u3, d2) if self.use_attention else d2
+        h_u2 = self.up2(torch.cat([h_u3, skip2], 1))
+        skip1 = self.attn1(h_u2, d1) if self.use_attention else d1
+        h_u1 = self.up1(torch.cat([h_u2, skip1], 1))
 
         # # upsample
         u8 = self.h_up8(d8)
@@ -93,7 +186,8 @@ class GFENetSkipConnectionBlock(nn.Module):
     """
 
     def __init__(self, outer_nc, inner_nc, input_nc=None,
-                 outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False):
+                 outermost=False, innermost=False, norm_layer=nn.BatchNorm2d,
+                 use_dropout=False, use_residual_blocks=False):
         """Construct a Unet submodule with skip connections.
 
         Parameters:
@@ -108,14 +202,15 @@ class GFENetSkipConnectionBlock(nn.Module):
         """
         super(GFENetSkipConnectionBlock, self).__init__()
         self.outermost = outermost
-        if type(norm_layer) == functools.partial:
-            use_bias = norm_layer.func == nn.InstanceNorm2d
-        else:
-            use_bias = norm_layer == nn.InstanceNorm2d
+        use_bias = _use_bias_from_norm(norm_layer)
         if input_nc is None:
             input_nc = outer_nc
-        downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4,
-                             stride=2, padding=1, bias=use_bias)
+
+        if use_residual_blocks:
+            downconv = ResidualDownBlock(input_nc, inner_nc, norm_layer=norm_layer)
+        else:
+            downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4,
+                                 stride=2, padding=1, bias=use_bias)
         downrelu = nn.LeakyReLU(0.2)
         downnorm = norm_layer(inner_nc)
         uprelu = nn.ReLU()
@@ -131,9 +226,13 @@ class GFENetSkipConnectionBlock(nn.Module):
             h_upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1)
-            down = [downconv]
-            up = [uprelu, upconv, nn.Tanh()]
-            h_up = [h_uprelu, h_upconv, nn.Tanh()]
+            down = [downconv] if use_residual_blocks else [downconv]
+            if use_residual_blocks:
+                up = [uprelu, upconv, ResidualConvBlock(input_nc, norm_layer=norm_layer), nn.Tanh()]
+                h_up = [h_uprelu, h_upconv, ResidualConvBlock(outer_nc, norm_layer=norm_layer), nn.Tanh()]
+            else:
+                up = [uprelu, upconv, nn.Tanh()]
+                h_up = [h_uprelu, h_upconv, nn.Tanh()]
         elif innermost:
             upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
                                         kernel_size=4, stride=2,
@@ -141,9 +240,14 @@ class GFENetSkipConnectionBlock(nn.Module):
             h_upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1, bias=use_bias)
-            down = [downrelu, downconv]
-            up = [uprelu, upconv, upnorm]
-            h_up = [h_uprelu, h_upconv, h_upnorm]
+            if use_residual_blocks:
+                down = [downconv]
+                up = [uprelu, upconv, upnorm, ResidualConvBlock(outer_nc, norm_layer=norm_layer)]
+                h_up = [h_uprelu, h_upconv, h_upnorm, ResidualConvBlock(outer_nc, norm_layer=norm_layer)]
+            else:
+                down = [downrelu, downconv]
+                up = [uprelu, upconv, upnorm]
+                h_up = [h_uprelu, h_upconv, h_upnorm]
         else:
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
@@ -151,9 +255,14 @@ class GFENetSkipConnectionBlock(nn.Module):
             h_upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1, bias=use_bias)
-            down = [downrelu, downconv, downnorm]
-            up = [uprelu, upconv, upnorm]
-            h_up = [h_uprelu, h_upconv, h_upnorm]
+            if use_residual_blocks:
+                down = [downconv]
+                up = [uprelu, upconv, upnorm, ResidualConvBlock(outer_nc, norm_layer=norm_layer)]
+                h_up = [h_uprelu, h_upconv, h_upnorm, ResidualConvBlock(outer_nc, norm_layer=norm_layer)]
+            else:
+                down = [downrelu, downconv, downnorm]
+                up = [uprelu, upconv, upnorm]
+                h_up = [h_uprelu, h_upconv, h_upnorm]
             if use_dropout:
                 up = up + [nn.Dropout(0.5)]
                 h_up = h_up + [nn.Dropout(0.5)]
