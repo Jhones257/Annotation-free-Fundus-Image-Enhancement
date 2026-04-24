@@ -2,7 +2,6 @@
 debug*
 log/
 datasets/
-checkpoints/
 results/
 build/
 protected/
@@ -43,4 +42,10 @@ test/.coverage
 test/data/legacy_serialized.pt
 *~
 .idea
+/ORIGINAL_CLEAN_768x768/
+/RETINOGRAFO_EYER_PROCESSED/
 /checkpoints/
+/wandb/
+itapecuru_all_gray_v3.csv
+itapecuru_all_labeled_v3_com_tipo.csv
+metricas_qualidade_resultados.csv
