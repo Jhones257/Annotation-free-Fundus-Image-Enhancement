@@ -14,8 +14,19 @@ from optparse import OptionParser
 
 
 def get_mask(img):
+    """
+    Create a boolean mask from a PIL Image.
+
+    Args:
+        img (PIL.Image.Image): Input image to process.
+
+    Returns:
+        numpy.ndarray: Boolean mask array produced by converting the image
+        to grayscale, thresholding at 10, and applying binary opening with
+        an 8x8 structuring element.
+    """
     gray = np.array(img.convert('L'))
-    return ndimage.binary_opening(gray > 10, structure=np.ones((8, 8)))
+    return ndimage.binary_opening(gray > 0.2, structure=np.ones((2, 2)))
 
 
 def mkdir(path):

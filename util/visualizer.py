@@ -13,7 +13,7 @@ else:
     VisdomExceptionBase = ConnectionError
 
 
-def save_images(webpage, visuals, image_path, aspect_ratio=1.0, width=256, guide=False):
+def save_images(webpage, visuals, image_path, aspect_ratio=1.0, width=256, guide=False, relative_paths=None):
     """Save images to the disk.
 
     Parameters:
@@ -26,20 +26,38 @@ def save_images(webpage, visuals, image_path, aspect_ratio=1.0, width=256, guide
     This function will save images stored in 'visuals' to the HTML file specified by 'webpage'.
     """
     image_dir = webpage.get_image_dir()
-    short_path = ntpath.basename(image_path[0])
-    name = os.path.splitext(short_path)[0]
+    rel_dir = ''
+    header_text = None
+    if relative_paths:
+        rel_path = relative_paths[0].replace('\\', '/')
+        rel_dir = os.path.dirname(rel_path)
+        header_text = rel_path
+        name = os.path.splitext(os.path.basename(rel_path))[0]
+        if rel_dir:
+            save_dir = os.path.join(image_dir, rel_dir)
+            os.makedirs(save_dir, exist_ok=True)
+    else:
+        short_path = ntpath.basename(image_path[0])
+        name = os.path.splitext(short_path)[0]
+        header_text = name
+    if not rel_dir:
+        save_dir = image_dir
 
-    webpage.add_header(name)
+    webpage.add_header(header_text)
     ims, txts, links = [], [], []
 
     for label, im_data in visuals.items():
         im = util.tensor2im(im_data, guide=guide)
         image_name = '%s_%s.png' % (name, label)
-        save_path = os.path.join(image_dir, image_name)
+        save_path = os.path.join(save_dir, image_name)
         util.save_image(im, save_path, aspect_ratio=aspect_ratio)
-        ims.append(image_name)
+        if rel_dir:
+            relative_image_name = os.path.join(rel_dir, image_name)
+        else:
+            relative_image_name = image_name
+        ims.append(relative_image_name)
         txts.append(label)
-        links.append(image_name)
+        links.append(relative_image_name)
     webpage.add_images(ims, txts, links, width=width)
 
 

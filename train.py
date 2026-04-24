@@ -19,10 +19,61 @@ See training and test tips at: https://github.com/junyanz/pytorch-CycleGAN-and-p
 See frequently asked questions at: https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix/blob/master/docs/qa.md
 """
 import time
+import importlib
 from options.train_options import TrainOptions
 from data import create_dataset
 from models import create_model
 from util.visualizer import Visualizer
+from tqdm import tqdm
+
+
+def _init_wandb(opt, model, dataset_size):
+    if not getattr(opt, 'use_wandb', False):
+        return None
+
+    try:
+        wandb = importlib.import_module('wandb')
+    except ModuleNotFoundError:
+        print('wandb is not installed. Install it with: pip install wandb')
+        return None
+
+    run_name = opt.wandb_run_name if opt.wandb_run_name else opt.name
+    entity = opt.wandb_entity if opt.wandb_entity else None
+    config = {k: v for k, v in vars(opt).items() if isinstance(v, (str, int, float, bool, list, tuple))}
+    config['dataset_size'] = dataset_size
+
+    wandb.init(
+        project=opt.wandb_project,
+        entity=entity,
+        name=run_name,
+        mode=opt.wandb_mode,
+        config=config,
+    )
+
+    if getattr(opt, 'wandb_watch', False):
+        wandb.watch(model.netG, log='all', log_freq=max(1, opt.print_freq))
+
+    return wandb
+
+
+def _get_current_lr(model):
+    if hasattr(model, 'optimizers') and model.optimizers:
+        optimizer = model.optimizers[0]
+        if optimizer.param_groups:
+            return optimizer.param_groups[0].get('lr', None)
+    return None
+
+
+def _infer_batch_size(data, default_batch_size):
+    """Infer the real batch size from the first tensor found in a data dict."""
+    if isinstance(data, dict):
+        for value in data.values():
+            if hasattr(value, 'size') and callable(value.size):
+                try:
+                    return int(value.size(0))
+                except Exception:
+                    continue
+    return int(default_batch_size)
 
 if __name__ == '__main__':
     opt = TrainOptions().parse()   # get training options
@@ -33,6 +84,7 @@ if __name__ == '__main__':
     model = create_model(opt)      # create a model given opt.model and other options
     model.setup(opt)               # regular setup: load and print networks; create schedulers
     visualizer = Visualizer(opt)   # create a visualizer that display/save images and plots
+    wandb = _init_wandb(opt, model, dataset_size)
     total_iters = 0                # the total number of training iterations
 
     for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):    # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
@@ -41,15 +93,19 @@ if __name__ == '__main__':
         epoch_iter = 0                  # the number of training iterations in current epoch, reset to 0 every epoch
         visualizer.reset()              # reset the visualizer: make sure it saves the results to HTML at least once every epoch
         model.update_learning_rate()    # update learning rates in the beginning of every epoch.在每个epoch开始前更新
+        
+        pbar = tqdm(total=dataset_size, desc=f'Epoch {epoch}/{opt.n_epochs + opt.n_epochs_decay}', unit='img')
         for i, data in enumerate(dataset):  # inner loop within one epoch
             iter_start_time = time.time()  # timer for computation per iteration
             if total_iters % opt.print_freq == 0:
                 t_data = iter_start_time - iter_data_time
 
-            total_iters += opt.batch_size
-            epoch_iter += opt.batch_size
+            current_batch_size = _infer_batch_size(data, opt.batch_size)
+            total_iters += current_batch_size
+            epoch_iter += current_batch_size
             model.set_input(data)         # unpack data from dataset and apply preprocessing
             model.optimize_parameters()   # calculate loss functions, get gradients, update network weights
+            pbar.update(current_batch_size)
 
             # 直接将网络初始化时希望可视化的参数送到visualizer
             if total_iters % opt.display_freq == 0:   # display images on visdom and save images to a HTML file
@@ -62,6 +118,14 @@ if __name__ == '__main__':
                 losses = model.get_current_losses()
                 t_comp = (time.time() - iter_start_time) / opt.batch_size
                 visualizer.print_current_losses(epoch, epoch_iter, losses, t_comp, t_data)
+                if wandb is not None:
+                    wandb_log = {f'train/{k}': float(v) for k, v in losses.items()}
+                    wandb_log['train/time_per_sample'] = float(t_comp)
+                    wandb_log['train/data_time'] = float(t_data)
+                    wandb_log['train/epoch'] = int(epoch)
+                    wandb_log['train/epoch_iter'] = int(epoch_iter)
+                    wandb_log['train/total_iters'] = int(total_iters)
+                    wandb.log(wandb_log, step=total_iters)
                 if opt.display_id > 0:
                     visualizer.plot_current_losses(epoch, float(epoch_iter) / dataset_size, losses)
 
@@ -72,10 +136,25 @@ if __name__ == '__main__':
                 model.save_networks(save_suffix)
 
             iter_data_time = time.time()
+        pbar.close()
+        
         # 保存网络
         if epoch % opt.save_epoch_freq == 0:              # cache our model every <save_epoch_freq> epochs
             print('saving the model at the end of epoch %d, iters %d' % (epoch, total_iters))
             model.save_networks('latest')
             model.save_networks(epoch)
 
-        print('End of epoch %d / %d \t Time Taken: %d sec' % (epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time))
+        epoch_time = time.time() - epoch_start_time
+        print('End of epoch %d / %d \t Time Taken: %d sec' % (epoch, opt.n_epochs + opt.n_epochs_decay, epoch_time))
+        if wandb is not None:
+            epoch_log = {
+                'epoch/time_sec': float(epoch_time),
+                'epoch/value': int(epoch),
+            }
+            current_lr = _get_current_lr(model)
+            if current_lr is not None:
+                epoch_log['train/lr'] = float(current_lr)
+            wandb.log(epoch_log, step=total_iters)
+
+    if wandb is not None:
+        wandb.finish()

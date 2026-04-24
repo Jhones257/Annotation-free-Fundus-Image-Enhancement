@@ -145,6 +145,8 @@ def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, conve
 def get_transform_six_channel(opt, params=None, grayscale=False, method=Image.BICUBIC, convert=True):
     transform_list = []
     mask_transform_list = []
+    if grayscale:
+        transform_list.append(transforms.Grayscale(1))
     if 'resize' in opt.preprocess:
         if params is None:
             osize = [opt.load_size, opt.load_size]

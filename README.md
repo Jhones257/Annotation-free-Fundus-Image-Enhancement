@@ -103,6 +103,14 @@ To set up your own dataset constructed like images/cataract_dataset. Note that t
 
 If you don't have any mask image, you can use util/get_mask.py to get the mask of target and source, and place them into the dataset. 
 
+For large folders (such as inference-only deployments) you can mirror an arbitrary directory tree into the GFENet `target/` + `target_mask/` layout and auto-generate masks in one step:
+
+```
+python scripts/prepare_gfenet_inference.py --input_dir ORIGINAL_CLEAN_768x768 --output_dir ./datasets/my_gfenet_eval
+```
+
+The script keeps every nested patient folder, copies the RGB image into `target/`, and stores a binary mask with the same relative path (but `.png` extension) inside `target_mask/`. Empty `source/` folders are also created so you can run `cataract_with_mask` dataloaders without manual tweaks.
+
 If you have simulated the low quality image following the previous steps, you can arrange them in the proper format to suit the dataloader.
 
 For a cataract dataset, the architecture of the directory should be: (You can use different image format but you might need to modify the code.)
@@ -188,8 +196,10 @@ python test.py --dataroot ./images/cataract_dataset --name scrnet --model scrnet
 For GFE-Net:
 
 ```
-python test.py --dataroot ./images/cataract_dataset --name gfenet --model gfenet --dataset_mode cataract_with_mask --load_size 256 --crop_size 256
+python test.py --dataroot ./images/cataract_dataset --name gfenet --model gfenet --dataset_mode cataract_with_mask --load_size 256 --crop_size 256 --preserve_subfolders
 ```
+
+Add `--preserve_subfolders` whenever you want the files saved under `results/` to retain the same relative directory tree (and filenames) as the originals contained in `--dataroot`.
 
 Released soon.
 

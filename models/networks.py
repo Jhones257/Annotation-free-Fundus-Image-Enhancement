@@ -119,7 +119,9 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
     return net
 
 
-def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[]):
+def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False,
+             init_type='normal', init_gain=0.02, gpu_ids=[],
+             gfe_use_residual=False, gfe_use_attention=False):
     """Create a generator
 
     Parameters:
@@ -164,7 +166,16 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
         net = UnetCombine2LayerGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
     elif netG == 'unet_gfe_net':
         from models.backbone.gfenet_backbone import UnetGFENetGenerator
-        net = UnetGFENetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+        net = UnetGFENetGenerator(
+            input_nc,
+            output_nc,
+            8,
+            ngf,
+            norm_layer=norm_layer,
+            use_dropout=use_dropout,
+            use_residual_blocks=gfe_use_residual,
+            use_attention=gfe_use_attention,
+        )
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)

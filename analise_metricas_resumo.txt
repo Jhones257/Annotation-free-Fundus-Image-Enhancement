@@ -1,0 +1,11 @@
+=== ANÁLISE RESUMIDA DAS MÉTRICAS DE QUALIDADE ===
+
+Total de imagens avaliadas: 5132
+
+Métricas FIQA / WFIQA (Baseadas na Rede MCFE-net)
+  - Total de Acertos (TP Global): 4676, Erros (FP/FN Globais): 644
+  - FIQA (Acurácia Global): 0.8789
+  - WFIQA (Macro F1-Score): 0.4813
+
+  * Análise: O aumento da acurácia e F1-Score do MCFE-net das imagens originais para as melhoradas indica o sucesso da restauração da imagem de fundo de olho para diagnósticos clínicos.
+

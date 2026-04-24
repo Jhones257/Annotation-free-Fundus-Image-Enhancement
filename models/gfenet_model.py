@@ -40,7 +40,7 @@ class GFENetModel(BaseModel):
         By default, we use vanilla GAN loss, UNet with batchnorm, and aligned datasets.
         """
         parser.set_defaults(norm='instance', netG='unet_gfe_net', dataset_mode='aligned', no_dropout=True,
-                            output_nc=3, lr=0.002, direction='AtoB')
+                    lr=0.002, direction='AtoB')
         if is_train:
             parser.set_defaults(pool_size=0, gan_mode='vanilla')
             parser.add_argument('--lambda_L1', type=float, default=1.0)
@@ -50,6 +50,10 @@ class GFENetModel(BaseModel):
         parser.add_argument('--filters_width_list', nargs='+', type=int, default=[9, 19, 29])
         parser.add_argument('--nsig_list', nargs='+', type=float, default=[5.0, 9.0, 13.0])
         parser.add_argument('--sub_low_ratio', type=float, default=1.0, help='weight for L1L loss')
+        parser.add_argument('--gfe_use_residual', type=int, default=0, choices=[0, 1],
+                    help='use residual blocks in GFENet encoder/decoder')
+        parser.add_argument('--gfe_use_attention', type=int, default=0, choices=[0, 1],
+                    help='use attention gates on U-Net skip connections')
         # parser.add_argument('--is_clamp', action='store_true')
 
         return parser
@@ -76,8 +80,12 @@ class GFENetModel(BaseModel):
         # opt.input_nc = 3 * len(opt.filters_width_list)
         # network_input_nc is not equal to opt.input_nc, because it should repeat to generate a few kernels to process the image.
         network_input_nc = opt.input_nc * len(opt.filters_width_list)
+        self.hfc_input_visual_start = opt.input_nc * max(0, len(opt.filters_width_list) - 1)
+        self.hfc_output_visual_start = opt.output_nc * max(0, len(opt.filters_width_list) - 1)
         self.netG = networks.define_G(network_input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
-                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
+                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids,
+                                      gfe_use_residual=bool(opt.gfe_use_residual),
+                                      gfe_use_attention=bool(opt.gfe_use_attention))
         self.hfc_filter_list = [
             HFCFilter(w, s, sub_low_ratio=opt.sub_low_ratio, sub_mask=True, is_clamp=True).to(self.device)
             for w, s in zip(opt.filters_width_list, opt.nsig_list)
@@ -118,14 +126,14 @@ class GFENetModel(BaseModel):
     def compute_visuals(self):
         # For visualization
         if self.isTrain:
-            self.real_SAH = self.real_SAH[:, 6:, :, :]
-            self.real_SBH = self.real_SBH[:, 6:, :, :]
-            self.fake_SBH = self.fake_SBH[:, 6:, :, :]
-            self.fake_SB_HFC = self.fake_SB_HFC[:, 6:, :, :]
+            self.real_SAH = self.real_SAH[:, self.hfc_input_visual_start:, :, :]
+            self.real_SBH = self.real_SBH[:, self.hfc_output_visual_start:, :, :]
+            self.fake_SBH = self.fake_SBH[:, self.hfc_input_visual_start:, :, :]
+            self.fake_SB_HFC = self.fake_SB_HFC[:, self.hfc_output_visual_start:, :, :]
         else:
-            self.real_TAH = self.real_TAH[:, 6:, :, :]
-            self.fake_TBH = self.fake_TBH[:, 6:, :, :]
-            self.fake_TB_HFC = self.fake_TB_HFC[:, 6:, :, :]
+            self.real_TAH = self.real_TAH[:, self.hfc_input_visual_start:, :, :]
+            self.fake_TBH = self.fake_TBH[:, self.hfc_input_visual_start:, :, :]
+            self.fake_TB_HFC = self.fake_TB_HFC[:, self.hfc_output_visual_start:, :, :]
 
     def test(self):
         self.visual_names = self.visual_names_test
